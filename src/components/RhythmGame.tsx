@@ -41,6 +41,14 @@ interface Song {
   description: string;
 }
 
+interface ModBuildConfig {
+  modName: string;
+  opponentName: string;
+  weekName: string;
+  accentColor: string;
+  includeVoices: boolean;
+}
+
 const SONGS: Song[] = [
   {
     name: 'Chill Beats',
@@ -121,6 +129,13 @@ export default function RhythmGame() {
     cameraZooming: true
   });
   const [engineLogs, setEngineLogs] = useState<string[]>([]);
+  const [modConfig, setModConfig] = useState<ModBuildConfig>({
+    modName: 'VS Chillwithbill10',
+    opponentName: 'bill',
+    weekName: 'chill-week',
+    accentColor: '#22c55e',
+    includeVoices: true,
+  });
   
   const [strumState, setStrumState] = useState<Record<Direction, 'idle' | 'pressed' | 'confirm'>>({
     left: 'idle', down: 'idle', up: 'idle', right: 'idle'
@@ -148,58 +163,152 @@ export default function RhythmGame() {
     setParticles(prev => [...prev, { id, x, y, color, life: 1.0 }]);
   };
 
+  const toSlug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  const hexToRgb = (hex: string) => {
+    const value = hex.replace('#', '');
+    if (value.length !== 6) return [34, 197, 94];
+    return [
+      parseInt(value.substring(0, 2), 16),
+      parseInt(value.substring(2, 4), 16),
+      parseInt(value.substring(4, 6), 16),
+    ];
+  };
+
+  const buildPsychChart = (song: Song) => {
+    const sectionLength = 16;
+    const notes = generateNotes(60000, song.bpm)
+      .sort((a, b) => a.time - b.time)
+      .map(n => [n.time, DIRECTIONS.indexOf(n.direction), n.length]);
+
+    const sections: Array<{ sectionNotes: number[][]; lengthInSteps: number; mustHitSection: boolean; bpm: number; changeBPM: boolean }> = [];
+    notes.forEach(note => {
+      const noteTime = note[0];
+      const sectionIndex = Math.floor(noteTime / (((60 / song.bpm) * 1000) * 4));
+      if (!sections[sectionIndex]) {
+        sections[sectionIndex] = {
+          sectionNotes: [],
+          lengthInSteps: sectionLength,
+          mustHitSection: true,
+          bpm: song.bpm,
+          changeBPM: false,
+        };
+      }
+      sections[sectionIndex].sectionNotes.push(note);
+    });
+
+    return {
+      song: {
+        song: song.name,
+        notes: sections.filter(Boolean),
+        bpm: song.bpm,
+        needsVoices: modConfig.includeVoices,
+        player1: 'bf',
+        player2: toSlug(modConfig.opponentName),
+        gfVersion: 'gf',
+        stage: 'stage',
+        speed: 1,
+      }
+    };
+  };
+
   const handleDownload = async () => {
     setIsDownloading(true);
     try {
       const zip = new JSZip();
+      const modSlug = toSlug(modConfig.modName || 'vs-mod');
+      const opponentSlug = toSlug(modConfig.opponentName || 'opponent');
+      const weekSlug = toSlug(modConfig.weekName || 'custom-week');
       
       // Psych Engine Mod Structure
-      const modFolder = zip.folder("VS_Chillwithbill10");
+      const modFolder = zip.folder(modSlug);
       
       // pack.json
       modFolder?.file("pack.json", JSON.stringify({
-        name: "VS Chillwithbill10",
-        description: "A high-energy rhythm battle against the Chillwithbill10 Gang!",
-        color: [34, 197, 94],
+        name: modConfig.modName,
+        description: `A custom FNF mod starring ${modConfig.opponentName}.`,
+        color: hexToRgb(modConfig.accentColor),
         restart: true
+      }, null, 2));
+
+      modFolder?.file('data/stages/stage.json', JSON.stringify({
+        directory: '',
+        defaultZoom: 0.9,
+        isPixelStage: false,
+        boyfriend: [770, 450],
+        girlfriend: [400, 130],
+        opponent: [100, 450],
+        hide_girlfriend: false,
+        camera_boyfriend: [0, 0],
+        camera_opponent: [0, 0],
+        camera_girlfriend: [0, 0],
+        camera_speed: 1
+      }, null, 2));
+
+      modFolder?.file(`data/characters/${opponentSlug}.json`, JSON.stringify({
+        animations: [
+          { anim: 'idle', name: `${opponentSlug} idle`, fps: 24, loop: true, indices: [] },
+          { anim: 'singLEFT', name: `${opponentSlug} left`, fps: 24, loop: false, indices: [] },
+          { anim: 'singDOWN', name: `${opponentSlug} down`, fps: 24, loop: false, indices: [] },
+          { anim: 'singUP', name: `${opponentSlug} up`, fps: 24, loop: false, indices: [] },
+          { anim: 'singRIGHT', name: `${opponentSlug} right`, fps: 24, loop: false, indices: [] },
+        ],
+        image: `characters/${opponentSlug}`,
+        scale: 1,
+        sing_duration: 4,
+        healthicon: opponentSlug,
+        position: [0, 0],
+        camera_position: [0, 0],
+        flip_x: false,
+        no_antialiasing: false,
+        healthbar_colors: hexToRgb(modConfig.accentColor)
       }, null, 2));
 
       // Data (Charts) & Songs (Audio)
       const data = modFolder?.folder("data");
       const songs = modFolder?.folder("songs");
+      const weeks = modFolder?.folder('weeks');
+
+      weeks?.file(`${weekSlug}.json`, JSON.stringify({
+        songs: SONGS.map(song => [song.name, toSlug(modConfig.opponentName), [0, 0, 0]]),
+        weekCharacters: [toSlug(modConfig.opponentName), 'bf', 'gf'],
+        weekBackground: 'stage',
+        weekBefore: 'tutorial',
+        storyName: modConfig.modName,
+        weekName: modConfig.weekName,
+        startUnlocked: true,
+        hiddenUntilUnlocked: false,
+        hideStoryMode: false,
+        hideFreeplay: false,
+        difficulties: 'Easy,Normal,Hard'
+      }, null, 2));
 
       SONGS.forEach(song => {
         const songKey = song.name.toLowerCase().replace(/\s+/g, '-');
         
         // Chart
         const songData = data?.folder(songKey);
-        songData?.file("charts.json", JSON.stringify({
-          song: song.name,
-          notes: generateNotes(60000, song.bpm).map(n => [n.time, DIRECTIONS.indexOf(n.direction), 0]),
-          bpm: song.bpm,
-          needsVoices: true,
-          player1: "bf",
-          player2: "bill",
-          stage: "stage"
-        }, null, 2));
+        songData?.file(`${songKey}-hard.json`, JSON.stringify(buildPsychChart(song), null, 2));
 
         // Audio
         const songAudio = songs?.folder(songKey);
         songAudio?.file("Inst.ogg", "MOCK_AUDIO_DATA");
-        songAudio?.file("Voices.ogg", "MOCK_AUDIO_DATA");
+        if (modConfig.includeVoices) {
+          songAudio?.file("Voices.ogg", "MOCK_AUDIO_DATA");
+        }
       });
 
       // Images (Characters)
       const images = modFolder?.folder("images");
-      const characters = images?.folder("characters");
-      characters?.file("bill.png", "MOCK_IMAGE_DATA");
-      characters?.file("bill.xml", `<?xml version="1.0" encoding="utf-8"?>
-<TextureAtlas imagePath="bill.png">
-	<SubTexture name="bill idle0000" x="0" y="0" width="150" height="150"/>
-	<SubTexture name="bill left0000" x="150" y="0" width="150" height="150"/>
-	<SubTexture name="bill down0000" x="300" y="0" width="150" height="150"/>
-	<SubTexture name="bill up0000" x="450" y="0" width="150" height="150"/>
-	<SubTexture name="bill right0000" x="600" y="0" width="150" height="150"/>
+      const characters = images?.folder('characters');
+      characters?.file(`${opponentSlug}.png`, "MOCK_IMAGE_DATA");
+      characters?.file(`${opponentSlug}.xml`, `<?xml version="1.0" encoding="utf-8"?>
+<TextureAtlas imagePath="${opponentSlug}.png">
+	<SubTexture name="${opponentSlug} idle0000" x="0" y="0" width="150" height="150"/>
+	<SubTexture name="${opponentSlug} left0000" x="150" y="0" width="150" height="150"/>
+	<SubTexture name="${opponentSlug} down0000" x="300" y="0" width="150" height="150"/>
+	<SubTexture name="${opponentSlug} up0000" x="450" y="0" width="150" height="150"/>
+	<SubTexture name="${opponentSlug} right0000" x="600" y="0" width="150" height="150"/>
 </TextureAtlas>`);
 
       // README
@@ -209,10 +318,10 @@ VS CHILLWITHBILL10 GANG - PSYCH ENGINE MOD
 
 INSTALLATION:
 1. Download and extract Psych Engine (v0.6.3 or newer).
-2. Copy the 'VS_Chillwithbill10' folder into the 'mods' directory of Psych Engine.
+2. Copy the '${modSlug}' folder into the 'mods' directory of Psych Engine.
 3. Launch Psych Engine.
-4. Go to 'Mods' in the main menu and ensure 'VS Chillwithbill10' is enabled.
-5. Play 'Chill Beats' in Freeplay or Story Mode!
+4. Go to 'Mods' in the main menu and ensure '${modConfig.modName}' is enabled.
+5. Play your songs in Freeplay or Story Mode!
 
 Mod by: Chillwithbill10
 Engine: Psych Engine Compatible
@@ -223,7 +332,7 @@ Engine: Psych Engine Compatible
       const url = URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'VS_CHILLWITHBILL10_PSYCH_MOD.zip';
+      link.download = `${modSlug.toUpperCase()}_PSYCH_MOD.zip`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -669,8 +778,45 @@ Engine: Psych Engine Compatible
               animate={{ opacity: 1, scale: 1 }}
               className="flex flex-col items-center gap-6 p-12 bg-black/80 backdrop-blur-xl rounded-3xl border border-green-500/30 shadow-2xl w-full max-w-2xl"
             >
-              <h2 className="text-4xl font-black italic uppercase text-green-400 border-b border-white/10 w-full text-center pb-4">Engine Options</h2>
-              
+              <h2 className="text-4xl font-black italic uppercase text-green-400 border-b border-white/10 w-full text-center pb-4">Engine + Mod Builder</h2>
+
+              <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  value={modConfig.modName}
+                  onChange={(e) => setModConfig(m => ({ ...m, modName: e.target.value }))}
+                  className="bg-white/10 px-4 py-3 rounded-xl border border-white/10"
+                  placeholder="Mod Name"
+                />
+                <input
+                  value={modConfig.opponentName}
+                  onChange={(e) => setModConfig(m => ({ ...m, opponentName: e.target.value }))}
+                  className="bg-white/10 px-4 py-3 rounded-xl border border-white/10"
+                  placeholder="Opponent Character"
+                />
+                <input
+                  value={modConfig.weekName}
+                  onChange={(e) => setModConfig(m => ({ ...m, weekName: e.target.value }))}
+                  className="bg-white/10 px-4 py-3 rounded-xl border border-white/10"
+                  placeholder="Week Name"
+                />
+                <label className="bg-white/10 px-4 py-3 rounded-xl border border-white/10 flex items-center justify-between">
+                  <span className="text-sm uppercase tracking-wider">Accent Color</span>
+                  <input
+                    type="color"
+                    value={modConfig.accentColor}
+                    onChange={(e) => setModConfig(m => ({ ...m, accentColor: e.target.value }))}
+                    className="w-10 h-8 bg-transparent border-none"
+                  />
+                </label>
+                <button
+                  onClick={() => setModConfig(m => ({ ...m, includeVoices: !m.includeVoices }))}
+                  className="md:col-span-2 flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10 hover:bg-white/10 transition-all"
+                >
+                  <span className="text-sm uppercase tracking-wider">Include Voices.ogg in export</span>
+                  <span className={`font-black ${modConfig.includeVoices ? 'text-green-400' : 'text-red-500'}`}>{modConfig.includeVoices ? 'YES' : 'NO'}</span>
+                </button>
+              </div>
+
               <div className="flex flex-col gap-4 w-full">
                 <button 
                   onClick={() => setEngineSettings(s => ({ ...s, downscroll: !s.downscroll }))}
